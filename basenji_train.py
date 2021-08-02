@@ -1,32 +1,24 @@
-from itertools import groupby
-import random
-from torch.utils.data import *
-# import pyBigWig
-import sys 
-import collections
-import scipy
-
-import os
 import numpy as np
 import random
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import *
 import torch.nn.functional as F
-import torchvision
-from torchvision import transforms
-import scipy.stats as stats
 
-import ray
+# import ray
 from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
+# from ray.tune import CLIReporter
+# from ray.tune.schedulers import ASHAScheduler
 
-from itertools import chain
-from statistics import mean
-import argparse 
+import json
+from itertools import groupby
+
+
+import matplotlib.pyplot as plt
+
+import pyBigWig
 
 from basenji_modules import * 
 from basenji_model import *
@@ -53,11 +45,11 @@ def main():
     args = get_args()
     print ('Got the args')
     train_loader, val_loader = get_train_val_loader(args.input, args.target, args.seq_len, args.batch_size,  args.chroms, cut=0.2)
-    print ('Got the loader')
-    model = retDNNModel(debug=False, seq_len=args.seq_len, loss='poisson')
+    print ('Got the loader')    
+    model = BasenjiModel(debug=False, seq_len=args.seq_len, loss='poisson')
     model.compile(device='cuda')
     print ('Compiled the model')
-    model.train_model(train_loader, val_loader, epochs=args.num_epochs, device='cuda', debug=args.debug)
-
+    train_model(model, epochs=args.num_epochs, debug=False)
+    
 if __name__ == '__main__':
      main()
