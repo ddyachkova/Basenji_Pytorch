@@ -1,31 +1,22 @@
-from itertools import groupby
-import random
-from torch.utils.data import *
-# import pyBigWig
-import sys 
-import collections
-import scipy
-
-import os
 import numpy as np
 import random
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import *
 import torch.nn.functional as F
-import torchvision
-from torchvision import transforms
-import scipy.stats as stats
 
-import ray
+# import ray
 from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
+# from ray.tune import CLIReporter
+# from ray.tune.schedulers import ASHAScheduler
 
-from itertools import chain
-from statistics import mean
+import json
+from itertools import groupby
+import matplotlib.pyplot as plt
+import pyBigWig
+
 
 
 class DNA_Iter(Dataset):
@@ -36,14 +27,25 @@ class DNA_Iter(Dataset):
         self.chrom = chrom
         self.target = target
         self.target_window = 128
+        np.random.seed(42)
+        self.indices = np.arange(self.target.chroms()[self.chrom])
+        # print ('len inner indices', len(self.indices))
+        np.random.shuffle(self.indices)
+        # self.indices = np.array([self.indices[i:i + batch_size] for i in range(int(len(self.indices)/batch_size))])
+        ### initialize randomized indices here 
     
     def __len__(self):
-        return int(len(self.seq) // self.batch_size)
+      # print ('len inner dset', int(len(self.indices) / self.batch_size) )
+      return int(len(self.indices) / self.batch_size)
 
     def __getitem__(self, idx):
-        dta = self.dna_1hot(self.seq[self.batch_size * idx:self.batch_size*(idx+1)], n_uniform=True)
-#         tgt = self.target.values(self.chrom, self.batch_size_y * idx, self.batch_size_y*(idx+1))
-        tgt = self.target[self.batch_size * idx: self.batch_size*(idx+1)]
+        ## pull a random index here with rand_ind[idx]
+
+        indices_subset = np.array([self.indices[idx:idx + self.batch_size]][0]).astype(int)
+        seq_subset = ''.join([self.seq[i] for i in indices_subset])
+        dta = self.dna_1hot(seq_subset, n_uniform=True)
+        tgt = [self.target.values(self.chrom, i, i + 1) for i in indices_subset]
+        # print ('len tgt', len(tgt), tgt[:10])
         tgt_window = self.calc_mean_lst(tgt, self.target_window)
         return torch.tensor(dta), torch.tensor(tgt_window) #.view(4, self.batch_size), torch.tensor(tgt_window)
 
@@ -85,7 +87,7 @@ class DNA_Iter(Dataset):
         return seq_code
     
     def calc_mean_lst(self, lst, n):
-        return np.array([mean(lst[i*n:(i+1) *n]) for i in range(int(len(lst)/n))])
+        return np.array([np.mean(lst[i:i + n]) for i in range(int(len(lst)/n))])
 
 
 class Faiter(Dataset):
@@ -94,8 +96,8 @@ class Faiter(Dataset):
     def __init__(self, fasta_name, target_name, batch_size, chroms='all'):
         
         self.fiter = self.fasta_iter(fasta_name)
-#         self.target = self.read_bw_target(target_name)
-        self.target = np.load(target_name)
+        self.target = self.read_bw_target(target_name)
+        # self.target = np.load(target_name)
         self.batch_size = batch_size
 
         self.datasets = {}
@@ -112,6 +114,7 @@ class Faiter(Dataset):
                     break 
 
     def __len__(self):
+        # return int(self.len / self.batch_size)
         return self.len
 
     def __getitem__(self, index):
@@ -119,7 +122,6 @@ class Faiter(Dataset):
         dataset_key = list(self.datasets.keys())[class_id]
         dataset = self.datasets[dataset_key]
         item = next(dataset)
-#         print (dataset_key)
         return item
     
     def read_bw_target(self, bw_name):
@@ -141,21 +143,38 @@ class Faiter(Dataset):
 
             yield (headerStr, seq)
 
-
-def get_train_val_loader(X, y, seq_len, batch_size, chroms, cut=0.2):
-#     dset = Faiter('data/heart_l131k/hg19.ml.fa', 'chr21_arr.npy', 16384)
+def get_train_val_loader(X, y, batch_size, chroms, cut=0.2):
     dset = Faiter(X, y, batch_size, chroms)
-    print (len(dset), 'len dset')
-    dset_indices = list(range(len(dset)))
-    np.random.shuffle(dset_indices)
+    dset_indices = np.arange(len(dset))
+    # print ('len dset', len(dset))
     val_split_index = int(np.floor(cut * len(dset_indices)))
-
     train_idx, val_idx = dset_indices[val_split_index:], dset_indices[:val_split_index]
     train_sampler = SubsetRandomSampler(train_idx)
     val_sampler = SubsetRandomSampler(val_idx)
-
     train_loader = DataLoader(dataset=dset, batch_size=1, shuffle=False, sampler=train_sampler)
     val_loader = DataLoader(dataset=dset, batch_size=1, shuffle=False, sampler=val_sampler)
     return train_loader, val_loader
 
 
+def _get_conv1d_out_length(l_in, padding, dilation, kernel, stride):
+    return int((l_in + 2*padding - dilation*(kernel-1) - 1)/stride)+1
+
+
+def pearsonr_pt(x, y):
+    mean_x, mean_y= torch.mean(x), torch.mean(y)
+    xm, ym = x.sub(mean_x), y.sub(mean_y)
+    r_num = xm.dot(ym)
+    r_den = torch.norm(xm, 2) * torch.norm(ym, 2)
+    r_val = r_num / r_den
+    return r_val
+
+def get_input(batch): 
+  seq_X,y = batch
+  seq_X, y = seq_X.type(torch.FloatTensor).view(1, 4, model.seq_len).cuda(), y.float().cuda()
+  return seq_X,y
+
+def get_pred_loss(model, seq_X, y):
+  out = model(seq_X).view(y.shape)
+  loss = model.loss_fn(out,y)
+  R = pearsonr_pt(out.squeeze(), y.squeeze()).to('cpu').detach().numpy()
+  return loss, R
