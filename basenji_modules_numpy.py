@@ -114,3 +114,74 @@ def get_pred_loss(model, seq_X, y):
   R = pearsonr_pt(out.squeeze(), y.squeeze()).to('cpu').detach().numpy()
   return loss, R
   
+def train_model(X_file, y_file, model, epochs=100, clip=10, device='cpu', modelfile='models/best_ret_checkpoint.pt', logfile = None, tuneray=False, verbose=True, debug=False):
+    train_losses, valid_losses, train_Rs, valid_Rs = [], [], [], []
+    best_model=-1
+    for epoch in range(epochs):
+        rain_loader, val_loader = get_train_val_loader(X_file, y_file, model.seq_len, 'chr1', cut=0.2)
+        # train_loader, val_loader = get_train_val_loader('hg19.ml.fa', 'basenji_target', model.seq_len, 'chr1', cut=0.2)
+        print (len(train_loader))
+        # training_loss, train_R = 0.0, 0.0
+        for batch_idx, batch in enumerate(train_loader):
+            model.train()
+            model.optimizer.zero_grad()
+            seq_X, y = get_input(batch) 
+            if debug: 
+                print ('X', seq_X.shape, 'y', y.shape)
+            
+            loss, R = get_pred_loss(model, seq_X, y)
+            loss.backward()
+            
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+            #torch.nn.utils.clip_grad_value_(self.parameters(), clip)
+            
+            model.optimizer.step()
+            train_losses.append(loss.data.item())
+            train_Rs.append(R)
+            
+            if verbose and batch_idx%10==0:
+                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tR: {:.6f}'.format(
+                        epoch, batch_idx * train_loader.batch_size, len(train_loader), 100. * batch_idx * float(train_loader.batch_size) / len(train_loader.dataset),
+                        loss.item(), R))
+                
+        if val_loader:
+            target_list, pred_list = [], []
+            valid_loss, valid_R = 0.0, 0.0
+            model.eval()
+            
+            for batch_idx, batch in enumerate(val_loader):
+                seq_X, y = get_input(batch) 
+                out = model(seq_X).view(1, 8)
+                loss, R = get_pred_loss(model, seq_X, y)
+                
+                valid_loss += loss.data.item() #* seq_X.size(0)
+                valid_R += R
+            valid_Rs.append(valid_R / len(val_loader.dataset))
+            valid_losses.append(valid_loss / len(val_loader.dataset))
+
+            if tuneray:
+                with tune.checkpoint_dir(step=epoch) as checkpoint_dir:
+                    path = os.path.join(checkpoint_dir, "checkpoint")
+                    torch.save((model.state_dict(), model.optimizer.state_dict()), path)
+                tune.report(loss=valid_loss, corel=valid_R)
+
+            if verbose:
+                print('Validation: Loss: {:.6f}\tR: {:.6f}'.format(valid_loss, valid_R))
+            
+            if logfile:
+                logfile.write('Validation: Loss: {:.6f}\tR: {:.6f}\n'.format(valid_loss, valid_R))
+
+            if (valid_R>best_model):
+                best_model = valid_R
+                if modelfile:
+                    print('Best model updated.')
+#                         self.save_model(modelfile)
+            
+            
+    return {'train_loss':train_losses, 'train_Rs':train_Rs, 'valid_loss':valid_losses, 'valid_Rs':valid_Rs}
+
+def save_model(self, filename):
+    torch.save(self.state_dict(), filename)
+
+def load_model(self, filename):
+    self.load_state_dict(torch.load(filename))
