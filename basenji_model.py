@@ -16,7 +16,6 @@ import json
 from itertools import groupby
 
 
-import matplotlib.pyplot as plt
 
 import pyBigWig
 

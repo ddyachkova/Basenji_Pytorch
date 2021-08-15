@@ -19,7 +19,7 @@ import gzip
 from io import BytesIO
 
 
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 import pyBigWig
 
@@ -103,9 +103,9 @@ def pearsonr_pt(x, y):
     r_val = r_num / r_den
     return r_val
 
-def get_input(batch): 
+def get_input(seq_len, batch): 
   seq_X,y = batch
-  seq_X, y = seq_X.type(torch.FloatTensor).view(1, 4, model.seq_len).cuda(), y.float().cuda()
+  seq_X, y = seq_X.type(torch.FloatTensor).view(1, 4, seq_len).cuda(), y.float().cuda()
   return seq_X,y
 
 def get_pred_loss(model, seq_X, y):
@@ -114,18 +114,18 @@ def get_pred_loss(model, seq_X, y):
   R = pearsonr_pt(out.squeeze(), y.squeeze()).to('cpu').detach().numpy()
   return loss, R
   
-def train_model(X_file, y_file, model, epochs=100, clip=10, device='cpu', modelfile='models/best_ret_checkpoint.pt', logfile = None, tuneray=False, verbose=True, debug=False):
+def train_model(input_file, target_file, model, chroms, epochs=100, clip=10, device='cpu', modelfile='models/best_ret_checkpoint.pt', logfile = None, tuneray=False, verbose=True, debug=False):
     train_losses, valid_losses, train_Rs, valid_Rs = [], [], [], []
     best_model=-1
     for epoch in range(epochs):
-        rain_loader, val_loader = get_train_val_loader(X_file, y_file, model.seq_len, 'chr1', cut=0.2)
+        train_loader, val_loader = get_train_val_loader(input_file, target_file, model.seq_len, chroms=chroms, cut=0.2)
         # train_loader, val_loader = get_train_val_loader('hg19.ml.fa', 'basenji_target', model.seq_len, 'chr1', cut=0.2)
         print (len(train_loader))
         # training_loss, train_R = 0.0, 0.0
         for batch_idx, batch in enumerate(train_loader):
             model.train()
             model.optimizer.zero_grad()
-            seq_X, y = get_input(batch) 
+            seq_X, y = get_input(model.seq_len, batch) 
             if debug: 
                 print ('X', seq_X.shape, 'y', y.shape)
             
@@ -150,8 +150,8 @@ def train_model(X_file, y_file, model, epochs=100, clip=10, device='cpu', modelf
             model.eval()
             
             for batch_idx, batch in enumerate(val_loader):
-                seq_X, y = get_input(batch) 
-                out = model(seq_X).view(1, 8)
+                seq_X, y = get_input(model.seq_len, batch) 
+                out = model(seq_X).view(y.shape)
                 loss, R = get_pred_loss(model, seq_X, y)
                 
                 valid_loss += loss.data.item() #* seq_X.size(0)
@@ -175,13 +175,13 @@ def train_model(X_file, y_file, model, epochs=100, clip=10, device='cpu', modelf
                 best_model = valid_R
                 if modelfile:
                     print('Best model updated.')
-#                         self.save_model(modelfile)
+                    save_model(model, modelfile)
             
             
     return {'train_loss':train_losses, 'train_Rs':train_Rs, 'valid_loss':valid_losses, 'valid_Rs':valid_Rs}
 
-def save_model(self, filename):
-    torch.save(self.state_dict(), filename)
+def save_model(model, filename):
+    torch.save(model.state_dict(), filename)
 
-def load_model(self, filename):
-    self.load_state_dict(torch.load(filename))
+def load_model(model, filename):
+    model.load_state_dict(torch.load(filename))

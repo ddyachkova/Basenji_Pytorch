@@ -14,7 +14,6 @@ from ray import tune
 
 import json
 from itertools import groupby
-import matplotlib.pyplot as plt
 import pyBigWig
 
 
@@ -151,8 +150,8 @@ def get_train_val_loader(X, y, batch_size, chroms, cut=0.2):
     train_idx, val_idx = dset_indices[val_split_index:], dset_indices[:val_split_index]
     train_sampler = SubsetRandomSampler(train_idx)
     val_sampler = SubsetRandomSampler(val_idx)
-    train_loader = DataLoader(dataset=dset, batch_size=1, shuffle=False, sampler=train_sampler)
-    val_loader = DataLoader(dataset=dset, batch_size=1, shuffle=False, sampler=val_sampler)
+    train_loader = DataLoader(dataset=dset, batch_size=1, shuffle=False, sampler=train_sampler, num_workers=4)
+    val_loader = DataLoader(dataset=dset, batch_size=1, shuffle=False, sampler=val_sampler, num_workers=4)
     return train_loader, val_loader
 
 
@@ -168,7 +167,7 @@ def pearsonr_pt(x, y):
     r_val = r_num / r_den
     return r_val
 
-def get_input(batch): 
+def get_input(model, batch): 
   seq_X,y = batch
   seq_X, y = seq_X.type(torch.FloatTensor).view(1, 4, model.seq_len).cuda(), y.float().cuda()
   return seq_X,y
@@ -179,17 +178,21 @@ def get_pred_loss(model, seq_X, y):
   R = pearsonr_pt(out.squeeze(), y.squeeze()).to('cpu').detach().numpy()
   return loss, R
 
-def train_model(model, epochs=100, clip=10, device='cpu', modelfile='models/best_ret_checkpoint.pt', logfile = None, tuneray=False, verbose=True, debug=False):
+def train_model(model, input_file, target_file, chroms, epochs, clip=10, modelfile='models/best_ret_checkpoint.pt', logfile = None, tuneray=False, verbose=True, debug=False):
+    model.cuda()
     train_losses, valid_losses, train_Rs, valid_Rs = [], [], [], []
     best_model=-1
+    print ("number of epochs", epochs)
     for epoch in range(epochs):
-        train_loader, val_loader = get_train_val_loader('hg19.ml.fa', 'basenji_target', model.seq_len, 'chr1', cut=0.2)
+        train_loader, val_loader = get_train_val_loader(input_file, target_file, model.seq_len, chroms, cut=0.2)
         print (len(train_loader))
         # training_loss, train_R = 0.0, 0.0
         for batch_idx, batch in enumerate(train_loader):
+            if batch_idx > 100:
+                break
             model.train()
             model.optimizer.zero_grad()
-            seq_X, y = get_input(batch) 
+            seq_X, y = get_input(model, batch) 
             if debug: 
                 print ('X', seq_X.shape, 'y', y.shape)
             
@@ -214,7 +217,9 @@ def train_model(model, epochs=100, clip=10, device='cpu', modelfile='models/best
             model.eval()
             
             for batch_idx, batch in enumerate(val_loader):
-                seq_X, y = get_input(batch) 
+                if batch_idx > 100:
+                    break
+                seq_X, y = get_input(model, batch) 
                 out = model(seq_X).view(1, 8)
                 loss, R = get_pred_loss(model, seq_X, y)
                 

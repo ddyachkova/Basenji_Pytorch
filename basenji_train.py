@@ -16,13 +16,12 @@ import json
 from itertools import groupby
 
 
-import matplotlib.pyplot as plt
 
 import pyBigWig
 
-from basenji_modules import * 
+from basenji_modules_memmap import * 
 from basenji_model import *
-
+import argparse
 
 def get_args():
     parser = argparse.ArgumentParser(description='Training parameters.')
@@ -34,8 +33,8 @@ def get_args():
     
     parser.add_argument('-lr', '--lr' , default = 0.001, type=float, help='Learning rate')
     
-    parser.add_argument('-input', '--input',  type=str, help='Path to the input')
-    parser.add_argument('-target', '--target', type=str, help='Path to the targets')
+    parser.add_argument('-input_file', '--input_file',  type=str, help='Path to the input')
+    parser.add_argument('-target_file', '--target_file', type=str, help='Path to the targets')
     parser.add_argument('-debug', '--debug', type=bool, default=False,  help='Path to the targets')
 
     return parser.parse_args()
@@ -44,12 +43,12 @@ def get_args():
 def main():
     args = get_args()
     print ('Got the args')
-    train_loader, val_loader = get_train_val_loader(args.input, args.target, args.seq_len, args.batch_size,  args.chroms, cut=0.2)
-    print ('Got the loader')    
     model = BasenjiModel(debug=False, seq_len=args.seq_len, loss='poisson')
     model.compile(device='cuda')
     print ('Compiled the model')
-    train_model(model, epochs=args.num_epochs, debug=False)
+    print ("Model seq len", model.seq_len)
+    res = train_model(model = model, epochs=args.num_epochs, input_file=args.input_file, target_file=args.target_file, chroms="chr1", debug=args.debug)
+    np.save("/wynton/home/goodarzi/ddyachkova/basenji_pytorch/training_30_epochs_chr1_memmap.npy", res)
     
 if __name__ == '__main__':
      main()
